@@ -16,8 +16,9 @@ def submit_event(log):
     ev.add_field('meta.span_type', 'span_event')
     # Make up a trace_id, else Honeycomb chokes.
     ev.add_field('trace.trace_id', str(uuid.uuid4()))
+    ev.created_at = datetime.utcfromtimestamp(log['time'])
 #    ev.add_field('Timestamp', datetime.utcfromtimestamp(log['time']).isoformat("T") + ".000Z")
-    ev.add_field('Timestamp', str(log['time'] * 1000))
+#    ev.add_field('Timestamp', str(log['time'] * 1000))
     ev.add_field('name', log['event'])
     
     # Iterate through fields, providing data for ones in the inclusion list,
