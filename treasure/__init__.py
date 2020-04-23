@@ -6,13 +6,17 @@ import uuid
 
 from flask import Flask, jsonify, request, abort
 from libhoney import Client
+import beeline
 
+from rws_common import honeycomb
 from .settings import config
 
 app = Flask(__name__)
 app.config.update(**config)
+honeycomb.init(app, 'treasure')
+honeycomb.sample_rate = 1
 
-client = Client(writekey = config['HONEYCOMB_KEY'], dataset = config['HONEYCOMB_CLIENT_DATASET'], debug = True)
+client = Client(writekey = config['HONEYCOMB_WRITEKEY'], dataset = config['HONEYCOMB_CLIENT_DATASET'])
 
 def submit_event(log):
     ev = client.new_event()
@@ -106,6 +110,7 @@ def event_post():
     resp = {}
     if 'pebble.phone_events' in req:
         resp['pebble.phone_events'] = [ submit_event(ev) for ev in req['pebble.phone_events'] ]
+        beeline.add_context_field('treasure.events.count', len(resp['pebble.phone_events']))
     return jsonify(resp)
 
 @app.route('/heartbeat')
