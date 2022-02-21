@@ -18,13 +18,22 @@ honeycomb.sample_rate = 1
 
 client = Client(writekey = config['HONEYCOMB_WRITEKEY'], dataset = config['HONEYCOMB_CLIENT_DATASET'])
 
-def submit_event(log):
+def submit_event(log, extra = {}):
     ev = client.new_event()
     ev.add_field('meta.span_type', 'span_event')
     # Make up a trace_id, else Honeycomb chokes.
     ev.add_field('trace.trace_id', str(uuid.uuid4()))
     ev.created_at = datetime.utcfromtimestamp(log['time'])
     ev.add_field('name', log['event'])
+    
+    # Users may wish to avoid handing us identifying information into
+    # analytics by overriding the write key; if so, ignore watch serial
+    # number information from the phone.
+    noident = 'rebble.noident' in extra
+    identfields = [
+        'device.remote_device.serial_number',
+        'device.remote_device.bt_address',
+    ]
     
     # Iterate through fields, providing data for ones in the inclusion list,
     # and crying about anything that we don't recognize.
@@ -57,14 +66,13 @@ def submit_event(log):
         'device.remote_device.firmware_description.version.firmware.bootloader_version',
         'carrier_info.iso_country_code',
         'device.remote_device.firmware_description.version.firmware.fw_version_timestamp',
+        *(identfields if not noident else []),
     ]
     
     # Don't complain about ones on the blacklist.
     blacklist = [
         'session',
-        'device.remote_device.serial_number',
         'identity.serial_number',
-        'device.remote_device.bt_address',
         'identity.device',
         'identity.user',
         'time',
@@ -73,6 +81,7 @@ def submit_event(log):
         'device_phone.name',
         'keen.timestamp',
         'keen.location.coordinates',
+        *(identfields if noident else []),
     ]
     
     unknown_fields = []
@@ -88,7 +97,10 @@ def submit_event(log):
             continue
         
         ev.add_field(field, data)
-    
+
+    for field in extra:
+        ev.add_field(field, extra[field])
+
     if len(unknown_fields) > 0:
         ev.add_field("unknown_fields", ','.join(unknown_fields))
     
@@ -106,10 +118,14 @@ def event_post():
         rdata = request.data
     req = json.loads(rdata)
     
+    extra = {}
+    if 'X-Td-Write-Key' in request.headers:
+        extra = dict([param.split('=') for param in request.headers['X-Td-Write-Key'].split(',')])
+    
     # The only table we support right now is pebble.phone_events.
     resp = {}
     if 'pebble.phone_events' in req:
-        resp['pebble.phone_events'] = [ submit_event(ev) for ev in req['pebble.phone_events'] ]
+        resp['pebble.phone_events'] = [ submit_event(ev, extra) for ev in req['pebble.phone_events'] ]
         beeline.add_context_field('treasure.events.count', len(resp['pebble.phone_events']))
     return jsonify(resp)
 
