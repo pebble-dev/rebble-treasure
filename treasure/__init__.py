@@ -33,6 +33,7 @@ def submit_event(log, extra = {}):
     identfields = [
         'device.remote_device.serial_number',
         'device.remote_device.bt_address',
+        'data.watch_serial_number',
     ]
     
     # Iterate through fields, providing data for ones in the inclusion list,
@@ -66,6 +67,42 @@ def submit_event(log, extra = {}):
         'device.remote_device.firmware_description.version.firmware.bootloader_version',
         'carrier_info.iso_country_code',
         'device.remote_device.firmware_description.version.firmware.fw_version_timestamp',
+        'data.firmware.fw_type',
+        'data.firmware.fw_version',
+        'data.firmware.fw_version_shortname',
+        'data.firmware.fw_version_timestamp',
+        'data.language_displayed_count',
+        'data.accepted',
+        'data.type_of_mobile_alert_invoked',
+        
+        # BLE failure
+        'data.transport',
+        'data.attempt_count',
+        'data.set_goal_disconnect',
+        'data.has_ever_connected',
+        'data.failing_state',
+        'data.failing_gatt_status',
+        'data.adapter_enabled',
+        'data.reason',
+        'data.is_already_connected',
+        'data.attempt_count',
+        'data.secs_since_adapter_enabled',
+        'data.unfaithful_reason',
+        
+        # voice
+        'data.error_returned',
+        'data.failed_to_connect',
+        'data.speech_sent_timestamp_secs',
+        'data.voice_language',
+        'data.nuance_session_id',
+        'data.data_volume_bytes',
+        'data.latency_ms',
+        'data.transcription_length_bytes',
+        'data.audio_duration_ms',
+        'data.is_first_party_app',
+        'data.nuance_host',
+        'data.voice_dictation_http_code',
+        
         *(identfields if not noident else []),
     ]
     
@@ -81,6 +118,45 @@ def submit_event(log, extra = {}):
         'device_phone.name',
         'keen.timestamp',
         'keen.location.coordinates',
+        
+        # notifications
+        'data.app_name',
+        'data.hasContentIntent',
+        'data.app_version',
+        'data.notifications_enabled',
+        'data.sentToWatch',
+        'data.wearActions',
+        'data.actions',
+        'data.pagesCount',
+        'data.contentAction',
+        'data.package_name',
+        'data.isClearable',
+        'data.wearActionCount',
+        'data.isDuplicate',
+        'data.actionCount',
+        'data.notifications_muted',
+        'data.source',
+        'data.hasMessagingStyle',
+        'data.isGroupSummary',
+        'data.action_type',
+        'data.action_title',
+        
+        # local BT address
+        'data.bt_address',
+        'data.serial', # ???
+        
+        # voice
+        'data.nuance_context',
+        'data.application_name',
+        'data.application_uuid',
+        
+        'data.token', # onboarding complete
+        'data.uuid', # watchface changed
+        
+        # health
+        'data.switch_id',
+        'data.enabled',
+        
         *(identfields if noident else []),
     ]
     
