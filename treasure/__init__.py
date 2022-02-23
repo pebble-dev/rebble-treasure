@@ -5,21 +5,63 @@ import json
 import uuid
 
 from flask import Flask, jsonify, request, abort
-from libhoney import Client
+import libhoney
 import beeline
+from google.cloud import bigquery
 
 from rws_common import honeycomb
 from .settings import config
+from .fields import IDENT, INCLUDE, BLOCK
 
 app = Flask(__name__)
 app.config.update(**config)
 honeycomb.init(app, 'treasure')
 honeycomb.sample_rate = 1
 
-client = Client(writekey = config['HONEYCOMB_WRITEKEY'], dataset = config['HONEYCOMB_CLIENT_DATASET'])
+bq = bigquery.Client()
+bqtable = bq.get_table(config['BIGQUERY_TABLE'])
+
+# Update the schema, as needed.  This is a really big mess!  Ugh!
+newschema = bqtable.schema[:]
+modified = False
+for n,field in enumerate(newschema):
+    if field.name == 'data':
+        # Construct a new one.
+        fields = list(field.fields)
+        for maybeins in [*IDENT, *INCLUDE]:
+            newname = maybeins.replace(".", "_0_") # Everything old is new again, I suppose.
+            found = False
+            for subfield in fields:
+                if subfield.name == newname:
+                    found = True
+                    break
+            if found:
+                continue
+            modified = True
+            print(f"updating BigQuery schema with new field {newname}")
+            fields.append(bigquery.SchemaField(newname, "STRING", mode = "NULLABLE"))
+        if modified:
+            newschema[n] = bigquery.SchemaField('data', 'RECORD', fields = fields)
+        break
+if modified:
+    bqtable.schema = newschema
+    bqtable = bq.update_table(bqtable, ["schema"])
+
+honey = libhoney.Client(writekey = config['HONEYCOMB_WRITEKEY'], dataset = config['HONEYCOMB_CLIENT_DATASET'])
 
 def submit_event(log, extra = {}):
-    ev = client.new_event()
+    bqrow = {}
+    bqrow["event_name"] = log["event"]
+    bqrow["time"] = log["time"]
+    
+    if 'rebble.user' in extra and 'rebble.noident' not in extra:
+        bqrow['rebble_user'] = extra['rebble.user']
+    if 'rebble.subscribed' in extra and 'rebble.noident' not in extra:
+        bqrow['rebble_subscribed'] = extra['rebble.subscribed']
+    
+    bqrow["data"] = {}
+
+    ev = honey.new_event()
     ev.add_field('meta.span_type', 'span_event')
     # Make up a trace_id, else Honeycomb chokes.
     ev.add_field('trace.trace_id', str(uuid.uuid4()))
@@ -30,134 +72,18 @@ def submit_event(log, extra = {}):
     # analytics by overriding the write key; if so, ignore watch serial
     # number information from the phone.
     noident = 'rebble.noident' in extra
-    identfields = [
-        'device.remote_device.serial_number',
-        'device.remote_device.bt_address',
-        'data.watch_serial_number',
-    ]
     
     # Iterate through fields, providing data for ones in the inclusion list,
     # and crying about anything that we don't recognize.
     includelist = [
-        'device_phone.model',
-        'data.screen',
-        'app.locale',
-        'app.version_code',
-        'device.remote_device.transport',
-        'collection',
-        'device.remote_device.firmware_description.version.firmware.recovery_fw_version',
-        'app.version',
-        'device_phone.locale',
-        'platform',
-        'device_phone.system_name',
-        'device.remote_device.hw_version',
-        'device.remote_device.type',
-        'device_phone.system_version',
-        'device.remote_device.firmware_description.version.firmware.fw_version',
-        'device_phone.supports_ble',
-        'carrier_info.mobile_network_code',
-        'device_phone.is_jailbroken',
-        'device.remote_device.firmware_description.version.firmware.fw_version_language_isocode',
-        'carrier_info.mobile_country_code',
-        'app_state.onboarding_complete',
-        'data.button_id',
-        'device_phone.system_build',
-        'carrier_info.carrier_name',
-        'device.remote_device.firmware_description.version.firmware.fw_version_language_version',
-        'device.remote_device.firmware_description.version.firmware.bootloader_version',
-        'carrier_info.iso_country_code',
-        'device.remote_device.firmware_description.version.firmware.fw_version_timestamp',
-        'data.firmware.fw_type',
-        'data.firmware.fw_version',
-        'data.firmware.fw_version_shortname',
-        'data.firmware.fw_version_timestamp',
-        'data.language_displayed_count',
-        'data.accepted',
-        'data.type_of_mobile_alert_invoked',
-        
-        # BLE failure
-        'data.transport',
-        'data.attempt_count',
-        'data.set_goal_disconnect',
-        'data.has_ever_connected',
-        'data.failing_state',
-        'data.failing_gatt_status',
-        'data.adapter_enabled',
-        'data.reason',
-        'data.is_already_connected',
-        'data.attempt_count',
-        'data.secs_since_adapter_enabled',
-        'data.unfaithful_reason',
-        
-        # voice
-        'data.error_returned',
-        'data.failed_to_connect',
-        'data.speech_sent_timestamp_secs',
-        'data.voice_language',
-        'data.nuance_session_id',
-        'data.data_volume_bytes',
-        'data.latency_ms',
-        'data.transcription_length_bytes',
-        'data.audio_duration_ms',
-        'data.is_first_party_app',
-        'data.nuance_host',
-        'data.voice_dictation_http_code',
-        
-        *(identfields if not noident else []),
+        *INCLUDE,
+        *(IDENT if not noident else []),
     ]
     
     # Don't complain about ones on the blacklist.
-    blacklist = [
-        'session',
-        'identity.serial_number',
-        'identity.device',
-        'identity.user',
-        'time',
-        'event',
-        'pebble_event_uuid',
-        'device_phone.name',
-        'keen.timestamp',
-        'keen.location.coordinates',
-        
-        # notifications
-        'data.app_name',
-        'data.hasContentIntent',
-        'data.app_version',
-        'data.notifications_enabled',
-        'data.sentToWatch',
-        'data.wearActions',
-        'data.actions',
-        'data.pagesCount',
-        'data.contentAction',
-        'data.package_name',
-        'data.isClearable',
-        'data.wearActionCount',
-        'data.isDuplicate',
-        'data.actionCount',
-        'data.notifications_muted',
-        'data.source',
-        'data.hasMessagingStyle',
-        'data.isGroupSummary',
-        'data.action_type',
-        'data.action_title',
-        
-        # local BT address
-        'data.bt_address',
-        'data.serial', # ???
-        
-        # voice
-        'data.nuance_context',
-        'data.application_name',
-        'data.application_uuid',
-        
-        'data.token', # onboarding complete
-        'data.uuid', # watchface changed
-        
-        # health
-        'data.switch_id',
-        'data.enabled',
-        
-        *(identfields if noident else []),
+    blocklist = [
+        *BLOCK,
+        *(IDENT if noident else []),
     ]
     
     unknown_fields = []
@@ -165,7 +91,7 @@ def submit_event(log, extra = {}):
         field = field_raw.replace('_0_', '.')
         data = log[field_raw]
         
-        if field in blacklist:
+        if field in blocklist:
             continue
         if field not in includelist:
             print(f"CAUTION: unknown field {field} on event {log['event']}")
@@ -173,16 +99,20 @@ def submit_event(log, extra = {}):
             continue
         
         ev.add_field(field, data)
+        bqrow["data"][field_raw] = str(data)
 
     for field in extra:
         ev.add_field(field, extra[field])
 
     if len(unknown_fields) > 0:
         ev.add_field("unknown_fields", ','.join(unknown_fields))
+        bqrow["unknown_fields"] = unknown_fields
     
     ev.send()
     
-    return { "success": "true" }
+    return bqrow
+
+# { "success": "true" }
 
 @app.route('/ios/v3/event', methods=['POST'])
 @app.route('/android/v3/event', methods=['POST'])
@@ -201,8 +131,14 @@ def event_post():
     # The only table we support right now is pebble.phone_events.
     resp = {}
     if 'pebble.phone_events' in req:
-        resp['pebble.phone_events'] = [ submit_event(ev, extra) for ev in req['pebble.phone_events'] ]
+        toinsert = [ submit_event(ev, extra) for ev in req['pebble.phone_events'] ]
+        errors = bq.insert_rows_json(config['BIGQUERY_TABLE'], toinsert)
+        if errors != []:
+            raise RuntimeError(errors)
+        # Sigh.
+        resp['pebble.phone_events'] = [ { "success": "true" } for _ in toinsert ]
         beeline.add_context_field('treasure.events.count', len(resp['pebble.phone_events']))
+        
     return jsonify(resp)
 
 @app.route('/heartbeat')
